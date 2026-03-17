@@ -2099,6 +2099,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "leader_routing"
+version = "0.1.0"
+dependencies = [
+ "env_logger 0.11.8",
+ "log",
+ "serde",
+ "solana-client",
+ "solana-sdk 2.3.1",
+ "tokio",
+ "zela-std",
+]
+
+[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
