@@ -8,17 +8,21 @@ This repository contains example **custom procedures** built on the [Zela](https
 
 ```
 .
-├── block_time/       # Procedure: BlockTime
-├── hello_world/      # Procedure: HelloWorld
-├── priority_fees/    # Procedure: PriorityFees
-├── Cargo.toml        
+├── block_time/           # Procedure: BlockTime
+├── hello_world/          # Procedure: HelloWorld
+├── leader_routing/       # Procedure: LeaderRouting
+│   └── data/
+│       └── validator_regions.csv   # precomputed validator → region map
+├── priority_fees/        # Procedure: PriorityFees
+├── scripts/              # Offline tooling (not deployed)
+│   ├── precompute_regions.py       # regenerates validator_regions.csv
+│   └── SCRIPTS_DOCS.md
+├── Cargo.toml
 ├── Cargo.lock
-├── run-procedure.sh  
-├── shell.nix         
+├── run-procedure.sh
+├── shell.nix
 └── .gitignore
 ```
-
-> **Only three procedures exist in this repository:** `block_time`, `hello_world`, and `priority_fees`. Calling any other procedure name will result in an error.
 
 ---
 
@@ -85,7 +89,93 @@ None — this procedure takes no parameters (pass an empty object `{}`).
 
 ---
 
-### 3. `priority_fees`
+### 3. `leader_routing`
+
+Answers: **"Which Zela server region should handle my request right now, to be closest to the current Solana leader?"**
+
+The procedure fetches the current slot and its leader from Solana mainnet, maps the leader to a coarse geographic location, and returns the nearest Zela region.
+
+**Input**
+
+None — pass an empty object `{}`.
+
+**Output**
+
+| Field            | Type     | Description                                                         |
+|------------------|----------|---------------------------------------------------------------------|
+| `slot`           | `u64`    | Current Solana slot                                                 |
+| `leader`         | `string` | Identity pubkey of the current slot leader                          |
+| `leader_geo`     | `string` | Coarse location of the leader (ISO 3166-1 alpha-2 country code, e.g. `"DE"`) or `"UNKNOWN"` |
+| `closest_region` | `string` | Nearest Zela region: `Frankfurt` \| `Dubai` \| `NewYork` \| `Tokyo` |
+
+**Example call**
+
+```bash
+curl --header "authorization: Bearer $JWT" \
+     --header "Content-Type: application/json" \
+     --data '{"jsonrpc":"2.0","id":1,"method":"zela.leader_routing#COMMIT_HASH","params":{}}' \
+     https://executor.zela.io
+```
+
+**Example response**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "slot": 407028739,
+    "leader": "4SsMncJdtKiUcDtukkX15mqei7WiuQ9yvRtQrQW4reWC",
+    "leader_geo": "US",
+    "closest_region": "NewYork"
+  }
+}
+```
+
+**How to build**
+
+```bash
+# native (for local testing)
+cargo build -p leader_routing
+
+# run the integration test against Solana mainnet
+cargo test -p leader_routing -- --nocapture
+
+# WASM artifact (for Zela deployment)
+cargo build -p leader_routing --target wasm32-wasip2 --release
+# artifact: target/wasm32-wasip2/release/leader_routing.wasm
+```
+
+**Geo mapping rule**
+
+The procedure maps each leader to a Zela region using a two-step lookup:
+
+1. **Precomputed map** (primary): `leader_routing/data/validator_regions.csv` is embedded at compile time. It was generated offline by `scripts/precompute_regions.py`, which resolved every active validator's gossip IP via [ip-api.com](https://ip-api.com) and applied the country-to-region table below.
+
+2. **RIR-based IP fallback** (for validators not in the map): fetches the leader's gossip address from `getClusterNodes` and maps the IP using Regional Internet Registry (RIR) first-octet ranges.
+
+3. **Final fallback**: if the leader is offline or completely unresolvable, returns `leader_geo: "UNKNOWN"` and defaults `closest_region` to `"Frankfurt"`.
+
+| Countries | → Zela Region |
+|---|---|
+| Europe (DE, FR, NL, GB, SE, FI, PL, …) | **Frankfurt** |
+| Middle East + Central Asia (AE, SA, TR, IL, KZ, …) | **Dubai** |
+| North + West Africa (EG, MA, DZ, NG, …) | **Frankfurt** |
+| East + South Africa (KE, ZA, ET, TZ, …) | **Dubai** |
+| Americas (US, CA, BR, MX, …) | **NewYork** |
+| Asia-Pacific + Oceania (JP, SG, KR, AU, IN, …) | **Tokyo** |
+
+**Assumptions, failure modes, and anti-flapping**
+
+The precomputed map covers all active Solana validators at the time of generation (~774 validators). A validator not in the map triggers the IP fallback, which uses coarse RIR-based first-octet ranges — accurate enough for the large cloud providers (Hetzner, AWS, OVH) that host the majority of validators.
+
+The region assignment is **deterministic**: the same validator always maps to the same region regardless of when or how often the procedure is called, so there is no flapping. The only scenario where `closest_region` could change for a validator is if they physically migrate their node to a different region, which is a deliberate infrastructure event — not noise. The CSV should be regenerated periodically (e.g. monthly) to keep the primary map current; see `scripts/SCRIPTS_DOCS.md` for instructions.
+
+Possible failure modes: `getSlot` or `getSlotLeaders` returning an error (e.g. RPC unavailability) causes the procedure to return a JSON-RPC error with code `1` and a human-readable message. A missing cluster-node entry for an offline leader is handled gracefully by falling back to Frankfurt rather than failing.
+
+---
+
+### 4. `priority_fees`
 
 Scans one or more Solana blocks and computes the average priority fee paid by non-voting transactions.
 
