@@ -26,6 +26,56 @@ This repository contains example **custom procedures** built on the [Zela](https
 
 ---
 
+## Executing a Procedure
+
+All procedures are called via JSON-RPC over HTTPS. The steps below apply to every procedure in this repository.
+
+### Step 1 — Get a project key
+
+In the [Zela Dashboard](https://zela.io) go to your project → **Settings → Keys** and create a key. Fill in `.env` using `.env.example` as a template.
+
+### Step 2 — Obtain a JWT
+
+```bash
+source .env
+
+JWT=$(curl -s \
+  --user "$ZELA_PROJECT_KEY_ID:$ZELA_PROJECT_KEY_SECRET" \
+  --data 'grant_type=client%5Fcredentials' \
+  --data 'scope=zela%2Dexecutor%3Acall' \
+  https://auth.zela.io/realms/zela/protocol/openid-connect/token \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+```
+
+The token is valid for 1 hour. You can reuse it for multiple calls within that window.
+
+### Step 3 — Call the executor
+
+```bash
+curl --header "authorization: Bearer $JWT" \
+     --header "Content-Type: application/json" \
+     --data '{"jsonrpc":"2.0","id":1,"method":"zela.PROCEDURE_NAME#COMMIT_HASH","params":PARAMS}' \
+     https://executor.zela.io
+```
+
+Where:
+- `PROCEDURE_NAME` — the Cargo package name (e.g. `leader_routing`)
+- `COMMIT_HASH` — the full git commit hash of the build shown in the Zela Dashboard
+- `PARAMS` — procedure input as JSON (`null` for procedures with no inputs)
+
+The first call after a deployment may take a few seconds while the executor loads the WASM into memory. Subsequent calls use the cached instance.
+
+### Using the helper script
+
+`run-procedure.sh` wraps steps 2 and 3 in one command:
+
+```bash
+source .env
+./run-procedure.sh "PROCEDURE_NAME#COMMIT_HASH" 'PARAMS'
+```
+
+---
+
 ## Procedures
 
 ### 1. `hello_world`
@@ -34,16 +84,16 @@ A minimal example demonstrating how to accept input parameters, perform computat
 
 **Input**
 
-| Field           | Type  | Description              |
-|----------------|-------|--------------------------|
-| `first_number`  | `i32` | First operand            |
-| `second_number` | `i32` | Second operand           |
+| Field           | Type  | Description    |
+| --------------- | ----- | -------------- |
+| `first_number`  | `i32` | First operand  |
+| `second_number` | `i32` | Second operand |
 
 **Output**
 
-| Field | Type  | Description                   |
-|-------|-------|-------------------------------|
-| `sum` | `i32` | Sum of the two input numbers  |
+| Field | Type  | Description                  |
+| ----- | ----- | ---------------------------- |
+| `sum` | `i32` | Sum of the two input numbers |
 
 **Error case**
 
@@ -69,12 +119,12 @@ None — this procedure takes no parameters (pass an empty object `{}`).
 
 **Output**
 
-| Field          | Type     | Description                                                   |
-|----------------|----------|---------------------------------------------------------------|
-| `block_time`   | `i64`    | Unix timestamp of the latest confirmed block (seconds)        |
-| `block_hash`   | `string` | Base58-encoded hash of the latest block                       |
-| `system_time`  | `i64`    | System clock timestamp at the start of the call (milliseconds)|
-| `time_elapsed` | `i64`    | Total RPC round-trip time in **microseconds**                 |
+| Field          | Type     | Description                                                    |
+| -------------- | -------- | -------------------------------------------------------------- |
+| `block_time`   | `i64`    | Unix timestamp of the latest confirmed block (seconds)         |
+| `block_hash`   | `string` | Base58-encoded hash of the latest block                        |
+| `system_time`  | `i64`    | System clock timestamp at the start of the call (milliseconds) |
+| `time_elapsed` | `i64`    | Total RPC round-trip time in **microseconds**                  |
 
 **Example response**
 
@@ -97,23 +147,24 @@ The procedure fetches the current slot and its leader from Solana mainnet, maps 
 
 **Input**
 
-None — pass an empty object `{}`.
+None — pass `"params":null`.
 
 **Output**
 
-| Field            | Type     | Description                                                         |
-|------------------|----------|---------------------------------------------------------------------|
-| `slot`           | `u64`    | Current Solana slot                                                 |
-| `leader`         | `string` | Identity pubkey of the current slot leader                          |
+| Field            | Type     | Description                                                                                 |
+| ---------------- | -------- | ------------------------------------------------------------------------------------------- |
+| `slot`           | `u64`    | Current Solana slot                                                                         |
+| `leader`         | `string` | Identity pubkey of the current slot leader                                                  |
 | `leader_geo`     | `string` | Coarse location of the leader (ISO 3166-1 alpha-2 country code, e.g. `"DE"`) or `"UNKNOWN"` |
-| `closest_region` | `string` | Nearest Zela region: `Frankfurt` \| `Dubai` \| `NewYork` \| `Tokyo` |
+| `closest_region` | `string` | Nearest Zela region: `Frankfurt` \| `Dubai` \| `NewYork` \| `Tokyo`                         |
 
 **Example call**
 
 ```bash
+# Get JWT first — see "Executing a Procedure" section above
 curl --header "authorization: Bearer $JWT" \
      --header "Content-Type: application/json" \
-     --data '{"jsonrpc":"2.0","id":1,"method":"zela.leader_routing#COMMIT_HASH","params":{}}' \
+     --data '{"jsonrpc":"2.0","id":1,"method":"zela.leader_routing#bd54645dfa3eb4afc2063d9f19b8453cd5bee1da","params":null}' \
      https://executor.zela.io
 ```
 
@@ -124,10 +175,10 @@ curl --header "authorization: Bearer $JWT" \
   "jsonrpc": "2.0",
   "id": 1,
   "result": {
-    "slot": 407028739,
-    "leader": "4SsMncJdtKiUcDtukkX15mqei7WiuQ9yvRtQrQW4reWC",
-    "leader_geo": "US",
-    "closest_region": "NewYork"
+    "slot": 407045388,
+    "leader": "2AKKnirWVZMhnzuwqpizw9SwfZjGpRFLx2zCCNtPWpbc",
+    "leader_geo": "SG",
+    "closest_region": "Tokyo"
   }
 }
 ```
@@ -156,14 +207,14 @@ The procedure maps each leader to a Zela region using a two-step lookup:
 
 3. **Final fallback**: if the leader is offline or completely unresolvable, returns `leader_geo: "UNKNOWN"` and defaults `closest_region` to `"Frankfurt"`.
 
-| Countries | → Zela Region |
-|---|---|
-| Europe (DE, FR, NL, GB, SE, FI, PL, …) | **Frankfurt** |
-| Middle East + Central Asia (AE, SA, TR, IL, KZ, …) | **Dubai** |
-| North + West Africa (EG, MA, DZ, NG, …) | **Frankfurt** |
-| East + South Africa (KE, ZA, ET, TZ, …) | **Dubai** |
-| Americas (US, CA, BR, MX, …) | **NewYork** |
-| Asia-Pacific + Oceania (JP, SG, KR, AU, IN, …) | **Tokyo** |
+| Countries                                          | → Zela Region |
+| -------------------------------------------------- | ------------- |
+| Europe (DE, FR, NL, GB, SE, FI, PL, …)             | **Frankfurt** |
+| Middle East + Central Asia (AE, SA, TR, IL, KZ, …) | **Dubai**     |
+| North + West Africa (EG, MA, DZ, NG, …)            | **Frankfurt** |
+| East + South Africa (KE, ZA, ET, TZ, …)            | **Dubai**     |
+| Americas (US, CA, BR, MX, …)                       | **NewYork**   |
+| Asia-Pacific + Oceania (JP, SG, KR, AU, IN, …)     | **Tokyo**     |
 
 **Assumptions, failure modes, and anti-flapping**
 
@@ -189,9 +240,9 @@ The procedure supports two input modes — you must pass **exactly one** of them
 }
 ```
 
-| Field         | Type     | Description                                |
-|---------------|----------|--------------------------------------------|
-| `block_count` | `usize`  | Number of most recent confirmed blocks to scan |
+| Field         | Type    | Description                                    |
+| ------------- | ------- | ---------------------------------------------- |
+| `block_count` | `usize` | Number of most recent confirmed blocks to scan |
 
 **Input: Specific blocks**
 
@@ -201,18 +252,18 @@ The procedure supports two input modes — you must pass **exactly one** of them
 }
 ```
 
-| Field    | Type       | Description                        |
-|----------|------------|------------------------------------|
-| `blocks` | `[u64]`    | List of specific slot numbers to scan |
+| Field    | Type    | Description                           |
+| -------- | ------- | ------------------------------------- |
+| `blocks` | `[u64]` | List of specific slot numbers to scan |
 
 **Output**
 
-| Field                            | Type     | Description                                                        |
-|----------------------------------|----------|--------------------------------------------------------------------|
-| `total_transactions`             | `usize`  | Total number of transactions scanned across all blocks             |
-| `vote_transactions`              | `usize`  | Number of transactions skipped because they are voting transactions |
-| `latest_block`                   | `u64`    | Slot number of the last processed block                            |
-| `average_priority_fee_lamports`  | `u64`    | Average priority fee (in lamports) across all non-voting transactions |
+| Field                           | Type    | Description                                                           |
+| ------------------------------- | ------- | --------------------------------------------------------------------- |
+| `total_transactions`            | `usize` | Total number of transactions scanned across all blocks                |
+| `vote_transactions`             | `usize` | Number of transactions skipped because they are voting transactions   |
+| `latest_block`                  | `u64`   | Slot number of the last processed block                               |
+| `average_priority_fee_lamports` | `u64`   | Average priority fee (in lamports) across all non-voting transactions |
 
 > **Note:** Priority fee = total fee − base fee (5000 lamports). Transactions with a fee below the base fee are skipped with an error log.
 
