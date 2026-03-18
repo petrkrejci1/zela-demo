@@ -220,7 +220,7 @@ The procedure maps each leader to a Zela region using a two-step lookup:
 
 The precomputed map covers all active Solana validators at the time of generation (~774 validators). A validator not in the map triggers the IP fallback, which uses coarse RIR-based first-octet ranges — accurate enough for the large cloud providers (Hetzner, AWS, OVH) that host the majority of validators.
 
-The region assignment is **deterministic**: the same validator always maps to the same region regardless of when or how often the procedure is called, so there is no flapping. The only scenario where `closest_region` could change for a validator is if they physically migrate their node to a different region, which is a deliberate infrastructure event — not noise. The CSV should be regenerated periodically (e.g. monthly) to keep the primary map current; see `scripts/SCRIPTS_DOCS.md` for instructions.
+The region assignment is **deterministic**: the same validator always maps to the same region regardless of when or how often the procedure is called, so there is no flapping. The only scenario where `closest_region` could change for a validator is if they physically migrate their node to a different region, which is a deliberate infrastructure event — not noise. The CSV should be regenerated periodically (e.g. weekly) to keep the primary map current; see `scripts/SCRIPTS_DOCS.md` for instructions.
 
 Possible failure modes: `getSlot` or `getSlotLeaders` returning an error (e.g. RPC unavailability) causes the procedure to return a JSON-RPC error with code `1` and a human-readable message. A missing cluster-node entry for an offline leader is handled gracefully by falling back to Frankfurt rather than failing.
 
